@@ -1,0 +1,21 @@
+#
+# STMicroelectonics LIS3DH and similar accelerometers
+#
+
+
+config SENSORS_LIS3DH_I2C
+	tristate "STMicroeletronics LIS3DH three-axis digital accelerometer (I2C)"
+	depends on I2C && INPUT
+	select SENSORS_LIS3DH
+	default n
+	help
+	  This driver provides support for the LIS3DH accelerometer connected
+	  via I2C. The accelerometer data is readable via
+	  /sys/devices/platform/lis3dh.
+
+	  This driver also provides an absolute input class device, allowing
+	  the device to act as a pinball machine-esque joystick.
+
+	  This driver can also be built as modules.  If so, the core module
+	  will be called lis3dh and a specific module for the I2C transport
+	  is called lis3dh_i2c.

@@ -1,6 +1,7 @@
 
 #include <linux/kernel.h>
 #include <linux/dmi.h>
+#include <linux/workqueue.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/platform_device.h>
@@ -8,6 +9,7 @@
 #include <linux/delay.h>
 #include <linux/semaphore.h>
 #include <linux/wait.h>
+#include <linux/jiffies.h>
 #include <linux/poll.h>
 #include <linux/i2c.h>
 #include <linux/slab.h>
@@ -461,6 +463,7 @@ static int lis3dh_drv_fasync (int fd, struct file *filp, int on)
 	return fasync_helper(fd, filp, on, &lis3dh->lis3dh_async);
 }
 
+#if (LIS3DH_USE_ISR_TASKLET == 1)
 //中断下半部读出此时的Gsensor数据
 static void lis3dh_bottom_half_handler(unsigned long data)
 {
@@ -471,23 +474,39 @@ static void lis3dh_bottom_half_handler(unsigned long data)
 	kill_fasync(&lis3dh->lis3dh_async, SIGIO, POLL_IN);	//异步IO通知
 
 #if (LIS3DH_USE_INPUT_SUBSYS == 1)
-	input_report_abs(lis3dh->idev, ABS_X, lis3dh->int_axis_data.axis_x);
-    input_report_abs(lis3dh->idev, ABS_Y, lis3dh->int_axis_data.axis_x);
-    input_report_abs(lis3dh->idev, ABS_Z, lis3dh->int_axis_data.axis_x);
+	input_report_abs(lis3dh->idev, ABS_X, lis3dh->int_axis_data.x);
+    input_report_abs(lis3dh->idev, ABS_Y, lis3dh->int_axis_data.y);
+    input_report_abs(lis3dh->idev, ABS_Z, lis3dh->int_axis_data.z);
     input_sync(lis3dh->idev);
 #endif
     enable_irq(lis3dh->irq);
+}
+#endif
+
+#define to_dalayed_work(__work) container_of(__work, struct delayed_work, work)
+
+static void lis3dh_int_work(struct work_struct *work)
+{
+	struct lis3dh_priv *lis3dh = container_of(to_dalayed_work(work), struct lis3dh_priv, work);
+
+	lis3dh->int_data_rdy = 1;
+	wake_up_interruptible(&lis3dh_waitq);
+	kill_fasync(&lis3dh->lis3dh_async, SIGIO, POLL_IN);
+	enable_irq(lis3dh->irq);
 }
 
 static irqreturn_t lis3dh_interrupt_isr(int irq, void *dev)
 {
 	struct lis3dh_priv *lis3dh = (struct lis3dh_priv *)dev;
 
-//	printk(KERN_ERR "###[%s:%d] ISR Enter!\n", __func__, __LINE__);
+	disable_irq_nosync(lis3dh->irq);
 
+#if (LIS3DH_USE_ISR_TASKLET == 1)
 	tasklet_init(&lis3dh->lis3dh_tasklet, lis3dh_bottom_half_handler, (unsigned long)lis3dh);
 	tasklet_schedule(&lis3dh->lis3dh_tasklet);
-	disable_irq_nosync(lis3dh->irq);
+#endif
+	// 防止抖动
+	schedule_delayed_work(&lis3dh->work, msecs_to_jiffies(500));
 
 	return IRQ_RETVAL(IRQ_HANDLED);
 }
@@ -570,6 +589,8 @@ int lis3dh_init_device(struct lis3dh_priv *lis3dh)
 		goto err_out;
 	}
 
+	INIT_DELAYED_WORK(&lis3dh->work, lis3dh_int_work);
+
 	lis3dh->irq = gpio_to_irq(pdata->gsensor_int_gpio);
 
 	ret = request_irq(lis3dh->irq, lis3dh_interrupt_isr,
@@ -583,7 +604,6 @@ int lis3dh_init_device(struct lis3dh_priv *lis3dh)
 		goto err_out;
 	}
 	enable_irq_wake(lis3dh->irq);
-
 
 	lis3dh->miscdev.minor = MISC_DYNAMIC_MINOR;
 	lis3dh->miscdev.name = LIS3DH_DEVICE_NODE_NAME;
@@ -617,6 +637,7 @@ int lis3dh_init_device(struct lis3dh_priv *lis3dh)
     	pr_err("input_register_device failed\n");
     	goto input_err;
     }
+    input_set_drvdata(lis3dh->idev, lis3dh);
 
 #endif
 
@@ -643,6 +664,7 @@ int lis3dh_remove_device(struct lis3dh_priv *lis3dh)
 		return -1;
 	}
 #if (LIS3DH_USE_INPUT_SUBSYS == 1)
+	input_unregister_device(lis3dh->idev);
 	input_free_device(lis3dh->idev);
 #endif
 	free_irq(lis3dh->irq, lis3dh);

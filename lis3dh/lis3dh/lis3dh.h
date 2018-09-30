@@ -8,6 +8,7 @@
 #include <linux/interrupt.h>
 
 #define LIS3DH_USE_INPUT_SUBSYS 0
+#define LIS3DH_USE_ISR_TASKLET 0
 
 #define LIS3DH_REG_ADDR_DEVICE_ID     0x0F
 
@@ -319,7 +320,11 @@ struct lis3dh_priv {
 #if (LIS3DH_USE_INPUT_SUBSYS == 1)
   struct input_dev          *idev;
 #endif
+
+#if (LIS3DH_USE_ISR_TASKLET == 1)
   struct tasklet_struct     lis3dh_tasklet;
+#endif
+  struct delayed_work           work;
 
   struct pinctrl            *int_pinctrl;
   struct pinctrl_state      *int_pinctrl_sta;

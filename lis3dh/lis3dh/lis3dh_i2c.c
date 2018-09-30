@@ -471,6 +471,7 @@ static int lis3dh_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
 err_req_gpio:
 err_get_gpio:
 err_lookup_state:
+	regmap_exit(lis3dh->regmap);
 	devm_pinctrl_put(lis3dh->int_pinctrl);
 	devm_gpio_free(dev, pdata->gsensor_int_gpio);
 
@@ -483,7 +484,12 @@ err_pctrl_get:
 static int lis3dh_i2c_remove(struct i2c_client *i2c)
 {
 	struct lis3dh_priv *lis3dh = i2c_get_clientdata(i2c);
+
+	dev_err(&i2c->dev, "### clc LIS3DH i2c remove Enter!\n");
+
+	device_remove_file(&i2c->dev, &dev_attr_lis3dh_reg);
 	lis3dh_remove_device(lis3dh);
+	regmap_exit(lis3dh->regmap);
 	devm_pinctrl_put(lis3dh->int_pinctrl);
 	devm_gpio_free(&i2c->dev, lis3dh->pdata.gsensor_int_gpio);
 	devm_kfree(&i2c->dev, lis3dh);

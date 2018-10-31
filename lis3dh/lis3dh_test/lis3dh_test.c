@@ -16,7 +16,7 @@
 #include "lis3dh.h"
 #include "option.h"
 
-
+#define SCALE_RANGE_16BIT (65536)
 #define GSENSOR_DEV ("/dev/lis3dh_acc")
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
@@ -26,11 +26,11 @@ typedef struct _gsensor_ctrl {
 	int acc_fd;
 	int scale_range;
 	int sensitivity_level;
+	int status;
 
 	int vehicle_mode;
 	struct timeval last_tv;
-
-	axis_data_mg_t dat_mg;
+	axis_data_mg_t dat_mg[GSENSOR_FIFO_NUM];
 } gsensor_ctrl_t;
 
 gsensor_ctrl_t gsnsr_ctrl;
@@ -62,6 +62,22 @@ static const char *vehicle_desp[] = {
 };
 
 
+
+static int raw_mg_range_map[4] = {
+	[LIS3DH_FULLSCALE_2] = 4000,			//+- 2G, 4000mg
+	[LIS3DH_FULLSCALE_4] = 8000,			//+- 4G, 8000mg
+	[LIS3DH_FULLSCALE_8] = 16000,			//+- 8G, 16000mg
+	[LIS3DH_FULLSCALE_16] = 32000,			//+- 16G, 32000mg
+};
+
+void gsensor_convert_raw_data_to_mg(axis_data_mg_t *dat_mg)
+{
+	dat_mg->x = (short)(dat_mg->x * raw_mg_range_map[gsnsr_ctrl.scale_range] / SCALE_RANGE_16BIT);
+	dat_mg->y = (short)(dat_mg->y * raw_mg_range_map[gsnsr_ctrl.scale_range] / SCALE_RANGE_16BIT);
+	dat_mg->z = (short)(dat_mg->z * raw_mg_range_map[gsnsr_ctrl.scale_range] / SCALE_RANGE_16BIT);
+}
+
+
 static int interrupt_has_shake(void)
 {
 	int ret = 0;
@@ -86,7 +102,8 @@ static int interrupt_has_shake(void)
 void lis3dh_sig_hdl(int sig)
 {
 	int ret = 0;
-	axis_data_mg_t _dat_mg = {0};
+	int i = 0;
+	axis_data_mg_t _dat_mg[GSENSOR_FIFO_NUM];
 
 	if (SIGIO == sig)
 	{
@@ -97,13 +114,18 @@ void lis3dh_sig_hdl(int sig)
 		}
 
 		// 在这里做行车与安防业务逻辑处理
-		ret = ioctl(gsnsr_ctrl.acc_fd, GSENSOR_GET_INTTERRUPT_DATA, &_dat_mg);
+		ret = ioctl(gsnsr_ctrl.acc_fd, GSENSOR_GET_INTTERRUPT_DATA, _dat_mg);
 		if (ret)
 		{
 			printf("%s:%d ioctl failed.\n", __func__, __LINE__);
 			return;
 		}
-		printf("[INTERRUPT] ACCL_X: %08d mg, ACCL_Y: %08d mg, ACCL_Z: %08d mg\n", _dat_mg.x, _dat_mg.y, _dat_mg.z);
+		for (i = 0; i < GSENSOR_FIFO_NUM; ++i)
+		{
+			gsensor_convert_raw_data_to_mg(&_dat_mg[i]);
+			printf("[INTERRUPT][%d] ACCL_X: %08d mg, ACCL_Y: %08d mg, ACCL_Z: %08d mg\n", i, _dat_mg[i].x,
+				_dat_mg[i].y, _dat_mg[i].z);
+		}
 
 		if (gsnsr_ctrl.vehicle_mode)
 		{
@@ -135,6 +157,9 @@ void* change_sys_config_thread(void* arg)
 	int ret = 0;
 	int value = 0;
 	int i = 0;
+
+	//debug
+	return NULL;
 
 	while(1)
 	{
@@ -230,7 +255,7 @@ int device_init_work(void)
 	}
 
 	// 设置数据采样速率
-	value = LIS3DH_ODR_400Hz;
+	value = LIS3DH_ODR_200Hz;
 	ret = ioctl(gsnsr_ctrl.acc_fd, GSENSOR_SET_ODR_STATUS, &value);
 	if (ret)
 	{
@@ -297,12 +322,14 @@ int device_init_work(void)
 	return 0;
 }
 
-
 int main(int argc, char** argv)
 {
 	unsigned int cnt = 0;
 	int ret = 0;
+	int fd = 0;
 	int flags = 0;
+	int i = 0;
+	char buffer[4096] = {0};
 
 	pthread_t thread_id;
 	pthread_attr_t tattr;
@@ -336,17 +363,37 @@ int main(int argc, char** argv)
         return -1;
     }
 
+#if 0
+
+    fd = open("/sys/devices/78b6000.i2c/i2c-2/2-0018/lis3dh_reg", O_RDWR | O_NONBLOCK | O_NOCTTY , S_IRWXU | S_IRWXG);
+    read(fd, buffer, 4096);
+    printf("%s\n", buffer);
+    return 0;
+#endif
+
 	while(1)
 	{
-		ret = read(gsnsr_ctrl.acc_fd, &gsnsr_ctrl.dat_mg, sizeof(gsnsr_ctrl.dat_mg));
+#if 1
+		ret = read(gsnsr_ctrl.acc_fd, gsnsr_ctrl.dat_mg, sizeof(gsnsr_ctrl.dat_mg));
 		if (ret < 0)
 		{
 			printf("read failed.\n");
 		}
 
-		printf("[%08u] ACCL_X: %08d mg, ACCL_Y: %08d mg, ACCL_Z: %08d mg\n", cnt++,
-											gsnsr_ctrl.dat_mg.x, gsnsr_ctrl.dat_mg.y, gsnsr_ctrl.dat_mg.z);
-
+		for (i = 0; i < GSENSOR_FIFO_NUM; ++i)
+		{
+			gsensor_convert_raw_data_to_mg(&gsnsr_ctrl.dat_mg[i]);
+			printf("[%08u, num: %d] ACCL_X: %04d mg, ACCL_Y: %04d mg, ACCL_Z: %04d mg\n", cnt++, i,
+											gsnsr_ctrl.dat_mg[i].x, gsnsr_ctrl.dat_mg[i].y, gsnsr_ctrl.dat_mg[i].z);
+		}
+#else
+		ret = ioctl(gsnsr_ctrl.acc_fd, GSENSOR_GET_RUNNING_STATUS, &gsnsr_ctrl.status);
+		if (ret)
+		{
+			printf("%s:%d ioctl failed.\n", __func__, __LINE__);
+		}
+		printf("current gsensor status %d\n", gsnsr_ctrl.status);
+#endif
 		usleep(5 * 1000);
 	}
 	printf("==========end==========\n");

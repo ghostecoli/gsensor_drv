@@ -1,6 +1,8 @@
 #ifndef __YM_LIS3HD_ACC_H__
 #define __YM_LIS3HD_ACC_H__
 
+
+#define GSENSOR_FIFO_NUM (32)
 //ioctl命令构建
 #define GSENSOR_IOCTL_BASE  'Y'
 #define GSENSOR_GET_MODEL_NAME              _IOR(GSENSOR_IOCTL_BASE, 0, char *)
@@ -12,7 +14,8 @@
 #define GSENSOR_SET_INTERRUPT_MODE          _IOR(GSENSOR_IOCTL_BASE, 9, int)
 #define GSENSOR_SET_AXIS_ENABLE             _IOR(GSENSOR_IOCTL_BASE, 11, int)
 #define GSENSOR_SET_AXIS_INTERRUPT          _IOR(GSENSOR_IOCTL_BASE, 13, int)
-#define GSENSOR_GET_INTTERRUPT_DATA         _IOR(GSENSOR_IOCTL_BASE, 15, int[3])
+#define GSENSOR_GET_INTTERRUPT_DATA         _IOR(GSENSOR_IOCTL_BASE, 15, int[3*GSENSOR_FIFO_NUM])
+#define GSENSOR_GET_RUNNING_STATUS          _IOR(GSENSOR_IOCTL_BASE, 16, unsigned int)
 
 #define LIS3DH_INT1_ZHIE_ENABLE                        0x20
 #define LIS3DH_INT1_ZHIE_DISABLE                       0x00
@@ -79,9 +82,9 @@ typedef enum {
 
 
 typedef struct _axis_data_mg {
-  int x;
-  int y;
-  int z;
+  short x;
+  short y;
+  short z;
 } axis_data_mg_t;
 
 
